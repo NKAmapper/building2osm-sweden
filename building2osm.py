@@ -22,7 +22,7 @@ import zipfile
 import subprocess
 
 
-version = "0.10.0"
+version = "0.11.0"
 
 debug = False				# Add debugging / testing information
 verify = False				# Add tags for users to verify
@@ -46,9 +46,11 @@ curve_margin_nodes = 3		# At least three nodes in a curve (number of nodes)
 
 spike_margin = 170			# Max angle/bearing for spikes (degrees)
 
-token_filename = "geotorget_token.txt"	# Stored Geotorget credentials
-token_folder = "~/downloads/"			# Folder where token is stored, if not in current folder
+token_filename = "geotorget_token.txt"			# Stored Geotorget credentials
+token_folder = "~/downloads/"					# Folder where token is stored, if not in current folder
 
+ref_filename = "byggnader_ref.json"				# Stored translation table for ref
+ref_folder = "~/Jottacloud/LM/Byggnader_ref/"	# Folder for stored translation table
 
 
 # Output message to console
@@ -622,6 +624,27 @@ def load_heritage_buildings(save_heritage=False):
 
 
 
+# Loading translation table for buiding ref
+
+def load_building_refs():
+
+	message ("Loading building ref ...\n")
+
+	filename = ref_filename
+	if not os.path.isfile(ref_filename):
+		filename = os.path.expanduser(ref_folder + ref_filename)
+
+	if os.path.isfile(filename):
+		file = open(filename)
+		data = json.load(file)
+		file.close()
+		building_refs.update(data)
+
+	else:
+		message("\t*** File not found - generating new building refs\n")
+
+
+
 # Load building polygons from Lantmäteriet Geotorget or from local file.
 # Tag for OSM and include heritage information.
 
@@ -733,17 +756,29 @@ def load_buildings(municipality_id, filename=""):
 
 	# Iterate all buildings and assign tags
 
-	building_refs = {}  # Index - list of buildings with same ref
+	if building_refs:
+		last_building_ref = int(max(building_refs.values()))
+	else:
+		last_building_ref = 1001000  # Largest municipality has approx. 175k buildings
+
+	multi_buildings = {}  # Index - list of buildings with same ref
 	not_found = []  # Purpose in dataset not defined
 
-	for building in buildings:
+	sorted_buildings = sorted(buildings, key=lambda b: b['properties']['versiongiltigfran'])  # Due to refs
+
+	for building in sorted_buildings:
 		properties = building['properties']
 		tags = {}
 
 		# Get identifier, unique if house number added
 
 		ref = properties['objektidentitet']
-		tags['ref:lantmateriet:byggnad'] = ref
+		if ref in building_refs:
+			tags['ref:byggnad'] = building_refs[ ref ]
+		else:
+			last_building_ref += 1
+			tags['ref:byggnad'] = "%i" % last_building_ref
+			building_refs[ ref ] = tags['ref:byggnad']
 
 #		house_ref = ""
 #		if "husnummer" in properties and properties['husnummer']:
@@ -843,18 +878,21 @@ def load_buildings(municipality_id, filename=""):
 				if "klockstapel" in name or "klocktorn" in name:
 					tags['building'] = "bell_tower"
 
-		building['properties'] = tags
+		if original:
+			building['properties'].update(tags)
+		else:
+			building['properties'] = tags
 
 		# Mark if multiple buildings have same ref
 
-		if ref in building_refs:
-			if len(building_refs[ ref ]) == 1:
-				building_refs[ ref ][0]['properties']['MULTI'] = "yes"
+		if ref in multi_buildings:
+			if len(multi_buildings[ ref ]) == 1:
+				multi_buildings[ ref ][0]['properties']['MULTI'] = "yes"
 			building['properties']['MULTI'] = "yes"
-			building_refs[ ref ].append(building)
+			multi_buildings[ ref ].append(building)
 
 		else:
-			building_refs[ ref ] = [ building ]
+			multi_buildings[ ref ] = [ building ]
 
 	count_polygons = sum((building['geometry']['type'] == "Polygon") for building in buildings)
 	message ("\tLoaded %i building polygons\n" % count_polygons)
@@ -1936,6 +1974,30 @@ def save_buildings(filename):
 
 
 
+# Save building refs
+
+def save_building_refs():
+
+#	message ("Saving building refs ...\n")
+
+	filename = ref_filename
+	test_folder = os.path.expanduser(ref_folder)
+	if os.path.isdir(test_folder):
+		filename = test_folder + ref_filename
+	else:
+		message ("\t*** Building ref folder not found - saving in default folder\n")
+
+	message ("\tSaved building refs in '%s'\n" % filename)
+
+	if os.path.isfile(filename):
+		os.replace(filename, filename.replace(".json", "_old.json"))  # Keep previous version
+
+	file = open(filename, "w")
+	json.dump(building_refs, file, ensure_ascii=False, indent=0)
+	file.close()
+
+
+
 # Main function for processing one municipality
 
 def process_municipality(municipality_id, input_filename=""):
@@ -1944,8 +2006,12 @@ def process_municipality(municipality_id, input_filename=""):
 	message ("Municipality: %s %s\n\n" % (municipality_id, municipalities[ municipality_id ]))
 
 	buildings.clear()  # Enable repeated calls
+	building_refs.clear()
 	removed_nodes.clear()
 
+	building_filename = "byggnader_%s_%s.geojson" % (municipality_id, municipalities[ municipality_id ].replace(" ", "_"))
+
+	load_building_refs()
 	load_buildings(municipality_id, input_filename)
 
 	if len(buildings) > 0:
@@ -1955,8 +2021,9 @@ def process_municipality(municipality_id, input_filename=""):
 			rectify_buildings()
 			simplify_buildings(extra_pass=True)
 
-		filename = "byggnader_%s_%s.geojson" % (municipality_id, municipalities[ municipality_id ].replace(" ", "_"))
-		save_buildings(filename)
+		save_buildings(building_filename)
+		if not original and not verify and not debug:
+			save_building_refs()
 
 		message("Done in %s\n\n\n" % timeformat(time.time() - mun_start_time))
 
@@ -1976,6 +2043,7 @@ if __name__ == '__main__':
 	building_types = {}		# Default tagging per building type
 	heritage_buildings = {}	# Heritage buildings from Riksantikvarämbetet
 	buildings = []			# List of all buildings
+	building_refs = {}		# Index from LM refs to OSM refs
 	removed_nodes = set()	# For verification/debugging
 	failed_runs = []		# Municipalities which did not complete
 
