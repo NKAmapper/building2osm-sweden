@@ -66,6 +66,7 @@ Parameters:
   * The _building_merge.py_ program may be run several times for the same municipality. Only buildings with a new _ref:lantmateriet:byggnad_ tag will be added each time.
 
 ### Changelog
+* 2026-02-08: _building2osm.py_: Translate Lantmäteriet ref to internal OSM _ref:byggnad_ for avoiding privacy concerns.
 * 2025-03-02: _building2osm.py_: Load heritage data from Riksantikvarieämbetet; Better topology/more details; Improved circles; More user-friendly municipality identification; File exception handling.
 * 2025-01-22: _building2osm.py_: Direct loading from Geotorget; Adjacent buildings connected. Improved building topology.
 * 2025-01-16: Added _building_split.py_.
